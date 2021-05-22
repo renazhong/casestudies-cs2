@@ -1,0 +1,294 @@
+---
+title: "Time to Unwind?: Future of Stress-Detection by Wearable Devices"
+author: "Daniel Rosen, Rena Zhong, Justina Zou"
+date: "9/28/2020"
+output: pdf_document
+header-includes:
+   - \usepackage{subfig}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(tidyverse)
+library(psych)
+library(caret)
+library(rsleep)
+library(cvms)
+library(xtable)
+```
+
+# I. Introduction 
+
+|     Apple's unveiling of the 6th generation of its Watch product in September of 2020 marked a significant change of course in how the company markets its wrist-worn products. Rather than highlighting how the Watch interacts with Apple's popular iPhone mobile phones to make calls, select music and receive calendar updates, the company shined the spotlight on the Watch's ability to serve as a health device (Albergotti 2020). Already Apple Watches and similar wrist-worn devices like those from Fitbit and Garmin can monitor metabolic output, physical activity and even potentially detect heart rate abnormalities that presage significant complications (Kosecki 2019). As such devices become increasingly adept at detecting physiological markers for objective phenomena like heart arrhythmias, wearable technologies companies may soon attempt to identify more complex conditions such as emotional state using biometric data form devices. In this paper, we will investigate whether biometric data can be used to distinguish the emotional states of amusement and stress. Additionally, we will explore whether data collected from wrist-worn devices provides sufficient information to determine a subject's state. 
+|     The physiological effects of stress has long been a topic of interest among medical professionals. Increased levels of stress have been linked to a myriad of ailments ranging from immunodeficiencies to decreased cognitive function to GI distress (Yaribeygi et. al. 2017). The recent boom in commercial health technologies coupled with a growing public interest in stress-reduction activities like yoga will likely foster demand for products that can identify states of stress in real time. (Wei 2016, Mamtani 2017). As a preliminary effort at demonstrating the utility of biological markers in detecting stress, we will attempt to use such markers to distinguish stress from amusement. Comparing stress and amusement is an apt initial exercise as the physiological effects of the two states are largely opposite. Stress induces the body to activate its sympathetic nervous system, leading to elevated heart rate, increased blood flow to certain muscles and a decrease of the body's core temperature (Seward 1994). Conversely, amusement has been shown to stimulate the parasympathetic nervous system which leads to a state of muscle relaxation and reduced heart rate (Wu et. al. 2019). Using the WESAD database, we will utilize markers of sympathetic nervous system activation to construct a classification model that distinguishes the two states (Schmidt et. al. 2018). 
+|     In Section II., we will discuss the composition of the WESAD database, our methods of data processing and our procedures for feature extraction. We will then provide exploratory analysis of the data to motivate our model parameter selection in Section III. In Section IV. we will develop the model which will determine whether a subject is experiencing stress, the validity of which we will evaluate in Section V. In Section VI. we will discuss the implications of our model output, potential limitations of our methodology and possible extensions for future inquiry on the subject of stress identification. 
+
+# II. Data 
+
+|     The data on which we will perform our analysis was sourced from a study conducted by Schmidt et. al. (2018). The researchers attached chest-worn (RespiBAN Professional) and wrist-worn sensors to 17 subjects who were then induced into various psychological states by the researchers. To simulate amusement, the researchers were shown funny video clips; for stress, the researchers had the subjects complete public speaking and arithmetic tasks. Additionally, the subjects were guided through meditative exercises to induce relaxation. The order in which subjects experienced each state consisted of either amusement, meditation, then stress or stress, meditation, and then amusement to account for potential bias due to ordering. 
+|     During the testing period, the two devices captured various physiological metrics from each subject. The chest sensor collected measures of respiration profundity ($RESP$), three-dimensional acceleration ($ACC_{x,y,z}$), electrical activity of the heart ($ECG$), electrical conduction of the skin ($EDA$), muscle activation ($EMG$) and core temperature ($TEMP$). The wrist sensor collected measures of blood volume pulse ($BVP$)--a proxy for heart rate--as well as $TEMP$, $EDA$ and $ACC_{x,y,z}$. Sampling rates and units of measurement for each variable can be found in Table 1. The researchers recorded what state a subject was in, which they recorded as the variable $Label$ ranging from 0 to 7. Label 2 indicates that the subject was experiencing stress and 3 indicates that the subject was amused. For the purposes of this analysis, we restrict our data set to points labeled with either of these states. After the testing period was complete, the researchers discarded readings from two of the subjects for issues relating to data fidelity, so the ultimate dataset contains readings for 15 subjects.
+|      Data from the wrist-worn device was collected far less frequently than data collected from the chest sensor. As such, we decided to upsample the data using a cubic spline interpolation method so that each subject has 700 complete measurements form both devices per second. The motivation for upsampling is to preserve the quality of the data for measurements that are more sensitive to sensor resolution. For instance, Braithwhite et. al. recommend a minimum sensor frequency of 500 Hz for all measurements of electrodermal activity and Kwon et. al. demonstrate that electrocaridogram measurements can only be downsampled to 250 Hz before there is noticeable information loss (Braithwhite et. al. 2015, Kwon et. al. 2018). This indicates that the sampling rates for the wrist-worn devices for both measurements might be insufficiently granular to capture all of the trends in the physiological response to stress. Nevertheless, as a complete heart rate cycle takes from 0.66 Hz to 3.0 Hz, and electrodermal activity displays cyclical activity with periods of 0.05 to 1.5 Hz, the E4 measurement rates of 64 Hz and 4 Hz respectively should be able to capture a number of data points for a given period in each metric (Gholipour 2018, Amiez and Procyk 2019). Additionally, we are confident that the limits to the rate at which radial body temperature and spatial acceleration can change indicate that the sampling rates of 4 Hz and 32 Hz are sufficient to capture trends in these phenomena. In this way, our use of upsampling is necessary to preserve the integrity of the data and is unlikely to significantly introduce bias. Our decision to use a cubic spline was based on a desire to minimize the trade-off between accuracy of interpolation and computational complexity. 
+|      We then proceed to process the data to extract relevant features. We employ a sliding window of 5-second width (equivalent to 3500 data points), with a shift of 0.25 seconds (equivalent to 175 data points). Our decision to use a 5-second window was based on a desire to provide models that can be used rapidly while maintaining a high level of predictive accuracy. Kreibig et. al. note that in physiological studies, windows with widths ranging from 0.5s to 300s are typically used (Kreibig et. al. 2010). We will discuss the potential sensitivity of our analysis to window size in Section V.
+|     Only windows which had a consistent label across all data points were retained. For each window, the mean and standard deviation of each metric from Table 1 is calculated. For cyclical variables like EMG, ECG, EDA and RESP, we expect that standard deviation over the window will better encapsulate relevant facets of the data like period and amplitude than the mean in accordance with the findings of the WESAD study (Schmidt et. al. 2018). Additionally, the range and slope between the last point and first point in each window were calculated for the EDA and temperature measurements from each sensor in order to evaluate directional trends in both metrics. As such, we employ a suite of features that comprise a subset of those created under the WESAD study. We believe that a leaner suite of features will more adequately reflect the statistics that can be measured by the commercial wrist-worn metrics. 
+|     The complete dataset comprises 10,773,733 data points containing measures of 37 variables across 15 subjects. For a full list of the variables included in our dataset as well as summary statistics from a sample, please refer to the appendix.
+```{r echo = FALSE, out.width="49%"}
+chest <- xtable(data.frame("Measure" = c("RESP", "ACC", "ECG", "EDA", "EMG", "TEMP"), "Unit" = c("%","g",  "mV", "$\\mu$S", "mV", "$^{\\circ}$C"), "Frequency" = c(rep("700 Hz", 6))))
+wrist <- xtable(data.frame("Measure" = c("ACC", "EDA", "BVP", "TEMP"), "Unit" = c( "g/64", "mV","nW", "$^{\\circ}$C"), "Frequency" = c("32 Hz", "4 Hz", "64 Hz", "4 Hz")))
+kable(list(chest, wrist), caption = "Chest (Left) and Wrist (Right) Measures ",  valign = 't', escape = TRUE) %>%
+kable_classic(full_width = F, html_font = "Cambria")
+```
+
+# III. Exploratory Data Analysis
+
+|     We now take a preliminary view of the data at our disposal using thinned samples of the dataset. Our first intuition is to examine well-known indicators of sympathetic nervous system activation. One such indicator is electrodermal activity, which can serve as a proxy for sweat production. In Figure 1a, we see that mean measures of EDA vary across all subjects, indicating significant physiological heterogeneity between individuals. When we compare the mean levels of EDA when a subject is stressed versus amused as in Figure 1b, it is clear that states of stress generally correspond to higher mean EDA readings. This plot was made with a 1% random sample of the total dataset.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+all_subjects_sample <- read_csv("all_subjects_sample.csv") %>% 
+  mutate(Subject = factor(Subject, levels = c("S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S13", "S14", "S15", "S16", "S17")))
+```
+
+```{r echo = FALSE, warning=FALSE, out.width="49%", out.height="49%", fig.show='hold', fig.align='center', fig.cap='Electrodermal Activity (Chest) Mean by Subject and Subject and State', fig.subcap=c('Here, we see variation across subjects in EDA mean level.', 'Certain indicators show perfect separability when using window means, possibly making classification trivial.'), fig.ncol = 2, fig.hold = TRUE}
+
+all_subjects_sample$Label <- factor(all_subjects_sample$Label, 
+                                      levels=c("2", "3"))
+chestedaprelim <- ggplot(data = all_subjects_sample, aes(x = Subject, y = EDA_chest_mean)) +
+  geom_boxplot(outlier.colour = "red") +
+  labs(title = "EDA (Chest) Mean by Subject", x = "Subject", y = "Window Mean (mV)") 
+chestedaoverlap <- ggplot(data = all_subjects_sample, aes(x = Label, y = EDA_chest_mean)) +
+  geom_boxplot(outlier.colour = "red") +
+  labs(title = "EDA (Chest) Mean by Subject and State", x = "State", y = "Window Mean (mV)")+facet_wrap(~Subject, scale="free")+
+  scale_x_discrete(labels = c("Stressed", "Amused"))
+chestedaprelim
+chestedaoverlap
+```
+
+|     Nevertheless, for certain subjects (like S2, S4 and S5), the data exhibits perfect separability. This means that a model trained on data for these subjects could pick a cut-off level for the metric above which it would classify the data point as stressed and it would be 100% accurate for the training set. There are two potential sources of this phenomenon. The first the distinct characteristics of physiological responses to stress and amusement. The sympathetic response to stress is complementary to the parasympathetic response to amusement. If stress, for example, causes blood pressure to rise, amusement should cause it to fall. Thus, it is plausible that naturally a perfect separation of states would arise in certain variables within a laboratory setting if the subject is allowed to achieve a suitable baseline state between trials. 
+|     Another potential source of the separability is the study design itself. In each of the trials, the subject was instructed to meditate between stressful tasks and amusing tasks. For subjects who were first exposed to stressful tasks, their baseline level of EDA might already be lower than it was before the stressful activity by the time they are subjected to the amusing task. We observe this exact occurence for Subject 2, a graphical representation of which can be viewed in the appendix. If the subject does not have the same baseline state before being subjected to each trial, the data might be artificially separated. 
+|     Regardless of its source, we view perfect separability across a host of mean estimates of metrics like electrodermal activity and core body temperature. These readings are problematic for designing models of practical import. One primary complication is that it makes model selection a trivial task as the most accurate models based on the training data will simply partition the data by these perfectly separable characteristics. Models constructed in this way are not likely to be robust in real-world scenario where one transitions from stress to amusement before reaching a baseline state. Accordingly, for the purposes of this analysis we will rely primarily on dynamic measures like standard deviations and slopes for each indicator to hopefully isolate baseline invariant predictors of stress. 
+
+|     In Figure 2, we plot the distributions of the standard deviations of a variety of indicators of the sympathetic nervous system. Although there is considerable overlap between measures for stress and amusement, the stress state shows generally higher standard deviations for a number of important markers of the sympathetic nervous system like BVP and ECG. Moreover, the level of deviation within a variable does not have the same issues with achieving a baseline state that means and absolute magnitudes exhibit. This significantly reduces the likelihood of engaging in spurious model fitting based on perfect seperability. Thus, we will rely on such metrics when constructing our models in Section IV. 
+
+```{r echo = FALSE, warning=FALSE, fig.dim=c(7,5.3), fig.cap="In this figure, we display boxplots representing the distributions of standard deviations for various biological markers in our dataset. Although there is considerable overlap between measures for stress and amusement, the stress state shows generally higher standard deviations for a number of important markers of the sympathetic nervous system like BVP and ECG. This plot was constructed using a 1% random sample of the total dataset.", fig.ncol = 1}
+
+par(mfrow=c(2,3))
+wristbvp <- ggplot(data = all_subjects_sample, aes(x = Label, y = BVP_wrist_sd)) +
+  geom_boxplot(outlier.colour = "red") + 
+  labs(title = "BVP (Wrist) Stand. Dev.", x = "State", y = "Value") +
+  scale_x_discrete(labels = c("Stressed", "Amused"))+
+  scale_y_continuous(limits=c(0,200))
+chestecg <- ggplot(data = all_subjects_sample, aes(x = Label, y = ECG_chest_sd)) +
+  geom_boxplot(outlier.colour = "red") +
+  labs(title = "ECG (Chest) Stand. Dev.", x = "State", y = "Value") +
+  scale_x_discrete(labels = c("Stressed", "Amused"))
+chestresp <- ggplot(data = all_subjects_sample, aes(x = Label, y = RESP_chest_sd)) +
+  geom_boxplot(outlier.colour = "red") + 
+  labs(title = "RESP (Chest) Stand. Dev.", x = "State", y = "Value") +
+  scale_x_discrete(labels = c("Stressed", "Amused"))+
+  scale_y_continuous(limits=c(0,10))
+chesttemp <- ggplot(data = all_subjects_sample, aes(x = Label, y = TEMP_chest_sd)) +
+  geom_boxplot(outlier.colour = "red") +
+  labs(title = "TEMP (Chest) Stand. Dev.", x = "State", y = "Value") +
+  scale_x_discrete(labels = c("Stressed", "Amused")) +
+  scale_y_continuous(limits=c(0,0.07))
+chesteda <- ggplot(data = all_subjects_sample, aes(x = Label, y = EDA_chest_sd)) +
+  geom_boxplot(outlier.colour = "red") +
+  labs(title = "EDA (Chest) Stand. Dev.", x = "State", y = "Value") +
+  scale_x_discrete(labels = c("Stressed", "Amused"))+
+  scale_y_continuous(limits=c(0,0.09))
+gridExtra::grid.arrange(wristbvp, chestecg, chestresp, chesttemp, chesteda)
+```
+
+# IV. Model Development
+
+|     To address the extent to which biometric data can be used to identify states of stress, we will employ a series of logistic regression models. First, we will create a model that is subject-blind in order to evaluate if a completely generalized model can be employed by wearable technologies firms. Our model takes the following form:
+
+\begin{center}
+$logit(\mu) = \beta_0 + \beta_1*EMG_{chest, \sigma} + \beta_2*ECG_{chest, \sigma} +\beta_3*EDA_{chest, \sigma} + \beta_4*TEMP_{chest, \sigma} + \beta_5*RESP_{chest, \sigma} + \beta_6*BVP_{wrist, \sigma}+\beta_7*EDA_{wrist, \sigma}+\beta_8*TEMP_{wrist, \sigma} + \beta_9*TEMP_{chest, slope} + \beta_{10}*TEMP_{wrist, slope}$
+\end{center}
+
+|     From this model, we can calculate the probability that a subject is in a state of amusement. If that probability exceeds 0.50, our model classifies the subject as amused.
+|     We included as parameters traditional indicators of sympathetic nervous system activation. In order to mitigate the effects of the potential errors in experimental design mentioned in Section III., we did not include measurements of the mean of any of the biological markers. Measurements of standard deviation and slope are baseline invariant, meaning that they do not rely on subjects having reached the same resting state before the researchers subjected them to each trial. This will help eliminate the potentially misleading perfect separation observed in certain variables. Additionally, standard deviations of cyclical metrics like respiration rate were shown by Schmidt et. al. to be potentially effective measures for evaluating stress. 
+|     We aim with our predictors to encapsulate the main effects of sympathetic nervous system activation. The body's activation of its "fight-or-flight" state (as occurs when one is under stress) manifests itself in increased heart rate, muscle stimulation, sweating and a decrease in core body temperature. Our model represents muscle simulation using EMG measurements, where fluctuations in electrical stimuli indicate increased activation. ECG and BVP both yield information about the functioning of the heart. In our model, measures of deviation in these metrics serve as a proxy for heart rate variability which has been shown to be an important indicator for stress (Kim et. al. 2018). To account for the effects that the sympathetic nervous system has on core and distal temperature, we have included terms for the standard deviation and slope of temperature measurements. For this metric, we chose to include measurements from both the wrist and chest sensors, as stress appears to have differing effects on temperature readings at each location (Vinkers et. al. 2013). Finally, our model includes the standard deviation of EDA measured at both the wrist and the chest. 
+|     Next, we employ a mixed-effects logistic regression where the intercept of the model is allowed to vary for each subject. In this model, we treat subject identity as having a random effect which comprises biological information like age, gender, and individual physiological responses to stress. Engineered factors like the standard deviation of BVP are considered random effects. This model adds indicator variables representing each of the 15 subjects to the first model and can be seen below. 
+
+\begin{center}
+$logit(\mu) = \beta_0 + \beta_1*EMG_{chest, \sigma} + \beta_2*ECG_{chest, \sigma} +\beta_3*EDA_{chest, \sigma} + \beta_4*TEMP_{chest, \sigma} + \beta_5*RESP_{chest, \sigma} + \beta_6*BVP_{wrist, \sigma}+\beta_7*EDA_{wrist, \sigma}+\beta_8*TEMP_{wrist, \sigma} + \beta_9*TEMP_{chest, slope} + \beta_{10}*TEMP_{wrist, slope}+ \beta_{subject_i}*I(Subject = subject_i)$
+\end{center}
+
+|     To evaluate whether wrist-worn devices alone are sufficient to detect stress, we fit a mixed-effects logistic regression similar to our second model using only sensor data from the E4 device. This model takes the following form:
+
+\begin{center}
+$logit(\mu) = \beta_0 + \beta_1*BVP_{wrist, \sigma}+\beta_2*EDA_{wrist, \sigma}+\beta_3*TEMP_{wrist, \sigma} + \beta_{4}*TEMP_{wrist, slope} + \beta_{subject_i}*I(Subject = subject_i)$
+\end{center}
+
+|     We then fit a model that adds a interaction components between the standard deviations of our measures for EMG, ECG, EDA (measured from the chest) and BVP. With this model, we intend to evaluate whether such interactions yield additional information about the activation of the sympathetic nervous system which might improve accuracy. This model takes the same form as the second model, with the addition of all pairwise, third-order and fourth-order interactions between $BVP_{wrist, \sigma}$, $EMG_{chest, \sigma}$, $EDA_{chest, \sigma}$ and $ECG_{chest, \sigma}$. 
+|     Lastly, we fit a mixed-effects model that includes a smaller predictor set comprising $EMG_{chest, \sigma}$, $EDA_{chest, \sigma}$, $RESP_{chest, \sigma}$ and $ECG_{chest, \sigma}$ and subject-level interactions for each treatment. We chose a restricted treatment set to limit the computational cost of training the model. This model should give more indication as to whether the physiological repsonse to stress is subject-dependent. These four models should indicate the complexity of sensor data necessary to accurately categorize states of stress and amusement. 
+
+# V. Model Evaluation
+
+## I. Results
+
+```{r echo = FALSE, out.width="45%"}
+models <- data.frame("Model" = c("Without Subject-Level Intercepts (1)", "With Subject-Level Effects (2)", "Only Wrist Data (3)", "With Factor Interactions (4)", "With Subject-Level Intercepts and Subject-Level Interactions (5)"), "Accuracy" = c("79.8%", "90.0%", "83.0%", "88.0%", "94.7%"), "AUC" = c("0.861", "0.961", "0.889", "0.966", "0.988"))
+kable(models, caption = "Evaluative Metrics for Each Model Using 5-Fold Cross-Validation",  valign = 't') %>%
+kable_classic(full_width = F, html_font = "Cambria")
+```
+
+```{r echo = FALSE, warning = FALSE, out.width = "60%", out.height="60%", fig.align="center", fig.cap = "Confusion matrices representing the classification accuracy of model 2 (left) and model 3 (right)"}
+conf_full <- tibble(target = c("Stress", "Amusement", "Stress", "Amusement"), prediction = c("Stress", "Stress", "Amusement", "Amusement"), n = c(598, 54, 45, 303))
+conf_wrist <- tibble(target = c("Stress", "Amusement", "Stress", "Amusement"), prediction = c("Stress", "Stress", "Amusement", "Amusement"), n = c(581, 108, 61, 249))
+conf_plt_full <- plot_confusion_matrix(conf_full, 
+                      targets_col = "target", 
+                      predictions_col = "prediction",
+                      counts_col = "n", 
+                      add_counts = FALSE)
+conf_plt_wrist <- plot_confusion_matrix(conf_wrist, 
+                      targets_col = "target", 
+                      predictions_col = "prediction",
+                      counts_col = "n", 
+                      add_counts = FALSE)
+gridExtra::grid.arrange(conf_plt_full, conf_plt_wrist, ncol = 2)
+```
+
+|      The results of our model fitting process indicate that sensor data is an effective way of distinguishing between stress and amusement. Estimates of the predictive accuracy of each model can be found in Table 2. Our baseline model which relies on measures of fluctuations of EDA, ECG, EMG, respiration and temperature within the clustered data was able to achieve a nearly 80% classification accuracy as estimated using 5-fold cross-validation. By allowing the intercept of the model to vary for each subject, we were able to improve our model's accuracy to 90%. Rates of misclassification of stress as amusement and vis-versa are 4.5% and 5.4% respectively, which suggests that the model is not biased towards a specific outcome. Notably, the relatively lean wrist-based model was still able to achieve an impressive 83% accuracy rate with balanced rates of misclassification. The wrist model had a higher rate of misclassification for data points representing amusement, indicating that the model might be slightly biased towards predicting stress. Nevertheless, the high predictive accuracy of the model suggests that wrist-based technologies are potentially capable of distinguishing stress and amusement. The results of the interaction model suggest that the increase in model complexity did not bring about a complementary increase in predictive accuracy. The coefficient values for models 
+|      At 94.7%, Model 5 was the model with the highest predictive accuracy. While this is impressive, we doubt that the model could be implemented in a commercial device. The model needs to be trained on subject-specific data for each of the parameters as opposed to simply establishing baseline measurements as in model 2. Were this to be distributed on the mass-market, each subject would essentially need to undergo a test like that which constructed the WESAD dataset to effectively generate the model. For this reason, we view model 3 as the model that best represents a potential commercial stress identifier.  
+|      For our selected model (model 2), each of the predictors was shown to be highly significant. The estimates for the coefficients of the standard deviations of EMG, ECG, EDA, core temperature, and BVP were each negative, in accordance with our understanding of the effects of the sympathetic nervous system. Since our model used stress as the baseline state, negative coefficients indicate that increasing the values of the corresponding predictors decreases the likelihood that the subject was amused. Greater fluctuations in electrical pulses to the muscles, heart rate, core temperature all indicate that a subject is experiencing stress according to our model. 
+|     We can interpret the coefficients in terms of odds ratios. Using the transformation $(e^{-\beta})$, we calculate the multiplicative increase in the likelihood that a subject is stressed given a 1 unit increase in a given parameter. We have generated our coefficients using standardized data to aid in interpretability. This means, for example, that a 1 unit increase in a standard deviation corresponds to doubling the standard deviation of a given measurement. Our model suggests that a 1 unit increase in the standard deviation of EMG corresponds to a 62.4% increase in the likelihood that a subject is stressed. A one unit increase in the standard deviation of chest EDA increases the likelihood of stress by a factor of 7.82. By comparison, a similar increase in standard deviation of ECG increases the likelihood of stress by a factor of 1141. The coefficient for temperature suggests an almost definitive classification of stress. This is consistent with the human body's reaction to stress. As the sympathetic nervous system is activated, the body enters "fight-or-flight" mode which is characterized by core temperature increases and heart rate spikes. While muscle activation and increased perspiration (measured by EMG and EDA respectively) are generally strong indicators of stress, decrease in core temperature and heart rate are tell-tale signs of stress. The effect of temperature may be overstated as it is unlikely for such a rapid change in temperature to occur in a 5-second window.   
+|     Conversely, greater measures of standard deviation in temperature at the wrist and respiration weakly increase the probability that a subject is experiencing amusement according to the model. For a 1 unit increase in standard deviation of wrist temperature, there is a 0.73% decrease in the likelihood that a subject is experiencing stress. For the standard deviation of respiration, the same increase would correspond to a 2.95% decrease in the likelihood that a subject is under stress. The former may be explained by the inverse relationship between distal and core temperature, while the latter is likely due to the quicker, shallower breaths that a person takes while in "fight-or-flight" mode (Fronczek et. al. 2008, Noyes et. al. 2017). However, the magnitude of the effects of each increase appear neglible in relation to those of the other predictors indicating that respiration and distal temperature are of lesser importance in predicting stress. The slope of wrist temperature showed a similarly small effect. Interestingly, the coefficient for slope of temperature measured at the chest was highly positive. If the slope of the chest temperature measurements increases by one standard deviation, our model suggests that the subject is 10.9 times less likely to be experiencing stress. This is consistent with our prior expectations for the trend in core temperature. The coefficients for the standard deviation of BVP, EDA and temperature for the wrist-based model have the same signs as in the complete model, suggesting that both models are capturing similar biological processes.
+|      In both the wrist-based model and the complete model, the coefficients for each subject are highly significant. This indicates that the physiological effects of sympathetic nervous system activation are non-standard across individuals, as was suggested within our exploratory data analysis. To quantify the extent to which heterogeneity of subjects accounts for variance in the data, we can compare the model that excludes the subject-level fixed effects and the model that includes it. Since the two models are nested, we will use an ANOVA test to determine the effect of providing unique intercepts for each subject. Comparison of the two models yields a highly significant F-statistic of 331668. This indicates that the residual variance in the model without terms for subjects was in part a consequence of between-subject heterogeneity of physiological response to stress. Thus, the high significance of the F-test in this model comparison leads us to believe that the response of individuals to stress is highly variable across subjects. By including such information in the model, we were able to increase its accuracy by 10%. 
+|      Our fifth model provides further information about the heterogeneity between subjects. In this model, we include interactions between the subjects and the treatments to evaluate whether the same change in some biological marker has the same effect on the likelihood of a subject being stressed. For each of these interactions, the regression coefficients display a wide range. The full model output (which is trained on non-standardized data) can be seen in the appendix. For example, a one unit increase in the standard deviation of RESP corresponds to a decrease by a factor of 9556 in the likelihood that Subject 4 is experiencing stress, whereas the same increase corresponds to an increase by a factor of 1.96 in the likelihood that Subject 15 is experiencing stress according to our model. Conducting the same analysis for the standard deviation of EDA suggests that a one unit increase indicates that Subject 11 is almost certainly experincing stress while the same increase indicates that Subject 15 is almost certainly amused. The extreme variance exhibited in the coefficients for each of the interactions is likely a consequence of perfect separability in the dataset rather than actually drastic divergence in physiological response. At the same time, these findings suggest that heterogeneity among subjects is significant. Thus, a model that treats each of the predictors as fixed effects across groups will display lower classification accuracy.
+
+## 2. Sensitivity Analysis
+
+|     In constructing our models, we make a number of discretionary assumptions which may have an effect on the model. Earlier, we discussed the rate of sampling necessary for representing various biological measures like ECG and EDA. Based on previous research, we predicted that downsampling to the minimum rate of sampling in our dataset (4 Hz) would induce significant information loss. In fact, when we build model 2 using data downsampled to 4 Hz, we see a reduction in accuracy from 90.0% to 83.4%. This reduction in accuracy might be justifiable given corresponding decreases in computational expense.
+|     Another assumption in our models was the decision to use a 5-second window width. To test the effect of this decision, we constructed models 1 and 3 with windows of 10 and 60 seconds. A table representing the results can be found in the appendix. For each increase in window size, there was a corresponding increase in predictive accuracy. These gains are moderate and represent a trade-off between potential classification speed and accuracy for a commercial device. 
+|      When testing our models, we relied on a 5-fold cross validation technique. Using a 10-fold cross validation scheme did not affect the estimated accuracy of the models. Both methods estimated the accuracy of model 2 to be 90.0%. 
+
+# VI. Discussion and Limitations
+
+|      Some limitations of the study include the fact that even though there are many observations available, it is across a relatively limited research pool of only 15 participants whose data was actually used. Therefore, personal lifestyle habits and other intrinsic factors such as age or sex (Novais, Monteiro, Roque, Correira-Neves, Sousa 2016) could potentially affect their individual response to stress, which may affect the data. Additionally, this study tested response to stress with stress defined as giving a presentation to some panel members. However, the number of situations that can induce stress can vary greatly from athletic competitions where mixed emotions of amusement and stress can be expressed. We also encountered the issue of perfect separability for certain metrics which we believe is the consequence of the fact that the data was collected from laboratory trials. This led us to exclude potentially relevant features like means of electrodermal activity within a window. 
+|      Future work could include expanding the number of participants and diversity of research subjects included, as well as taking a survey of the participants age, sex, weight, height, and other intrinsic factors. Additionally, the methods used in this study can be applied to data collected from real-world users to see whether or not the results are consistent. If such models were still effective in identifying stress, that might indicate that categorization algorithms for psychological state can be utilized in commercial products. Lastly, our model only distinguished between amusement and stress which have distinct biological characteristics. Further research might investigate whether physiological indicators can distinguish between more closely related states. 
+|      The results of our study indicate that sensor data is useful in detecting stress versus amusement. Using data from sensors placed on the chest and the wrist, we were able to achieve 90% classification accuracy. When we restricted our sensor data to only that collected using the wrist-worn device, we were still able to achieve a modestly impressive accuracy rate of 83%. This strongly indicates that wearables can play an important role in identifying states of stress as compared to amusement. Additionally, the results of our models highlight the high heterogeneity between individuals in their responses to stress. We hope that our findings can help guide technology companies to create accurate user-specific classifcation models to evaluate clients' emotional state. 
+
+
+# VII. Bibliography
+
+Albergotti, R. (2020). Apple's new watch draws attention to its health-care play. Retrieved September 30, 2020, from https://www.washingtonpost.com/technology/2020/09/15/apple-event-2020-apple-watch.
+
+Amiez, C. Emmanuel P. (2019) Electrodermal Activity. Science Direct. Retrieved from https://www.sciencedirect.com/topics/medicine-and-dentistry/electrodermal-activity.
+
+Gholipour, B. (2018). What is a Normal Heart Rate? Livescience. Retrieved from https://www.livescience.com/42081-normal-heart-rate.html
+
+Kim, H. G., Cheon, E. J., Bai, D. S., Lee, Y. H., & Koo, B. H. (2018). Stress and Heart Rate Variability: A Meta-Analysis and Review of the Literature. Psychiatry investigation, 15(3), 235â€“245. https://doi.org/10.30773/pi.2017.08.17.
+
+Kosecki, D. (2019). Buying an Apple Watch for the ECG app? Read this first. Retrieved September 30, 2020, from https://www.cnet.com/health/apple-watch-ecg-app-what-cardiologists-want-you-to-know.
+
+Kreibig, S. (2010). Autonomic nervous system activity in emotion: A review. Biological Psychology 84, 3 (2010), 394–421.
+
+Kwon, O., Jeong, J., Kim, H. B., Kwon, I. H., Park, S. Y., Kim, J. E., & Choi, Y. (2018). Electrocardiogram Sampling Frequency Range Acceptable for Heart Rate Variability Analysis. Healthcare informatics research, 24(3), 198–206. https://doi.org/10.4258/hir.2018.24.3.198
+
+Merletti, R. (1999). Standards for reporting EMG data. Journal of Electromyography and Kinesiology, 9(1):III-IV. doi:10.1016/s1050-6411(96)90013-9
+
+Novais, A., Monteiro, S., Roque, S., Correia-Neves, M., & Sousa, N. (2016). How age, sex and genotype shape the stress response. Neurobiology of stress, 6, 44â€“56. https://doi.org/10.1016/j.ynstr.2016.11.004
+
+Schmidt, P., Reiss, A., Duerichen, R., Marberger, C., & Laerhoven, K. V. (2018). Introducing WESAD, a Multimodal Dataset for Wearable Stress and Affect Detection. Proceedings of the 2018 on International Conference on Multimodal Interaction - ICMI 18. doi:10.1145/3242969.3242985.
+
+Seward B. (1994). Physiology of Stress. Jones and Bartlett Publishers.
+
+Vinkers, C. H., Penning, R., Hellhammer, J., Verster, J. C., Klaessens, J. H., Olivier, B., & Kalkman, C. J. (2013). The effect of stress on core and peripheral body temperature in humans. Stress (Amsterdam, Netherlands), 16(5), 520â€“530. https://doi.org/10.3109/10253890.2013.807243.
+
+Wearable Technology Market Overview. (2014). Alliedmarketresearch. Retrieved from https://www.alliedmarketresearch.com/wearable-technology-market.
+
+Wei, M. (2016). New survey reveals the rapid rise of yoga - and why some people still haven't tried it. Retrieved from https://www.health.harvard.edu/blog/new-survey-reveals-the-rapid-rise-of-yoga-and-
+why-some-people-still-havent-tried-it-201603079179.
+
+Wu, Y., Gu, R., Yang, Q., & Luo, Y. J. (2019). How Do Amusement, Anger and Fear Influence Heart Rate and Heart Rate Variability?. Frontiers in neuroscience, 13, 1131. https://doi.org/10.3389/fnins.2019.01131.
+
+Yaribeygi, H., Panahi, Y., Sahraei, H., Johnston, T. P., & Sahebkar, A. (2017). The impact of stress on body function: A review. EXCLI journal, 16, 1057â€“1072. https://doi.org/10.17179/excli2017-480.
+
+https://www.isek.org/wp-content/uploads/2015/05/Standards-for-Reporting-EMG-Data.pdf
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6085204/
+
+
+# VIII. Appendix
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+all_subjects_sample <- read_csv("all_subjects_sample.csv", col_names = TRUE) %>% 
+  arrange(X1) %>% 
+  mutate(Label = as.character(Label), )
+```
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+desc <- data.frame(describe(all_subjects_sample[, c(2:35)]))
+summ <- desc[, c(3,4,5)]
+```
+
+```{r echo = FALSE, out.width="49%"}
+kable(summ, caption = "Summary Statistics of a Sample of the Dataset (1/100th of Total)")%>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+sample_data <- read_csv("S2_sample.csv", col_names = TRUE) %>% 
+  arrange(X1) %>% 
+  mutate(Label = as.character(Label))
+```
+
+```{r eval = FALSE, echo = FALSE, message = FALSE,  fig.cap="In this figure, we plot the raw EDA value against our surrogate variable for time for Subject 2. As can be seen, the baseline level of EDA is already below the minimum baseline value before the stress test by the time the subject is subjected to the amusing tests. This plot was constructed using a 25% random sample of the data for Subject 2."}
+ggplot(sample_data, aes(x = X1, y = EDA_chest))+
+  geom_point(aes(color = Label))+
+  xlab("Time Since Start of Trial (Units)")+
+  ylab("EDA Chest Reading (mV)")+
+  scale_colour_discrete(labels = c("Undetermined", "Baseline", "Stress", "Amusement", "Meditation", "Miscellaneous I", "Miscellaneous II"))
+```
+
+
+```{r echo = FALSE, warning = FALSE, out.width = "90%"}
+m <-  detect_rpeaks(sample_data$ECG_chest, 175)
+int <- m[2:length(m)] - m[1:(length(m)-1)]
+ggplot() + aes(int)+ geom_histogram(colour="black", fill="white", bins = 100)
+```
+
+```{r echo = FALSE, out.width="49%"}
+models <- data.frame("Model" = c("Without Subject-Level Intercepts (1)", "Only Wrist Data (3)"), "Accuracy5s" = c("79.8%", "83.0%"), "Accuracy10s" = c("80.3%", "84.5%"), "Accuracy60S" = c("85.2%", "86.4%"))
+kable(models, caption = "Accuracy of Models Constructed Using Various Window Widths",  valign = 't', col.names = c("Model", "Accuracy 5 Seconds", "Accuracy 10 Seconds", "Accuracy 60 Seconds")) %>%
+kable_classic(full_width = F, html_font = "Cambria")
+```
+
+```{r echo = FALSE, out.height="49%"}
+subject_interactions <- read.table("subject_interactions.txt", header=T)
+kable(subject_interactions, longtable = T) %>%
+  kable_styling(latex_options = c("hold_position", "repeat_header"))
+```
+
+```{r echo = FALSE, out.height="49%"}
+wrist_only_scaled <- read.table("wrist_only_scaled.txt", header=T)
+kable(wrist_only_scaled, caption = "Wrist Only (Scaled) Model Table")
+```
+
+```{r echo = FALSE, out.height="49%"}
+with_subject_scaled <- read.table("with_subject_scaled.txt", header=T)
+kable(with_subject_scaled, caption = "With Subject (Scaled) Model Table")
+```
+
+```{r echo = FALSE, out.height="49%"}
+include_graphics('full_subjresiduals.png')
+```
+
+```{r echo = FALSE, out.height="49%"}
+include_graphics('full_subj_wristresiduals.png')
+```
+
+```{r echo = FALSE, out.height="49%"}
+include_graphics('full_subj_invariantresiduals.png')
+```
+
+```{r echo = FALSE, out.height="49%"}
+include_graphics('full_subj_interact_modelresiduals.png')
+```
